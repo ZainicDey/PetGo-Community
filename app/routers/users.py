@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_auth_db
 from app.models.user import DjangoUser, SocialProfile
 from app.schemas.user import ProfileCreate, ProfileResponse
 from app.dependencies import get_current_user
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 async def create_profile(
     profile_data: ProfileCreate,
     current_user: DjangoUser = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_auth_db)
 ):
     # Check if username is taken by someone else
     existing_user = db.query(DjangoUser).filter(
@@ -53,7 +53,7 @@ async def create_profile(
 @router.get("/profile", response_model=ProfileResponse)
 async def get_my_profile(
     current_user: DjangoUser = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_auth_db)
 ):
     if not current_user.social_profile:
         raise HTTPException(status_code=404, detail="Profile not found")

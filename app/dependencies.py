@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.database import get_db
+from app.database import get_auth_db
 from app.models.user import DjangoUser
 
 security = HTTPBearer()
@@ -15,7 +15,7 @@ security = HTTPBearer()
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-1s!i5n_7bcf!*%z99^_aqmi#u(gkeo-tqc)n*1^vy_9c4hy(ir")
 ALGORITHM = "HS256"
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_auth_db)):
     token = credentials.credentials
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

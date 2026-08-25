@@ -22,7 +22,7 @@ async def create_profile(
     
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already taken")
-
+    
     # Check if user already has a profile
     if current_user.social_profile:
         raise HTTPException(status_code=400, detail="User already has a profile")
@@ -67,3 +67,87 @@ async def get_my_profile(
         "date_of_birth": profile.date_of_birth,
         "username": current_user.username
     }
+
+from typing import List
+from app.models.follow import Follow
+from app.schemas.follow import FollowResponse, UserBasicInfo
+
+@router.post("/{user_id}/follow", response_model=FollowResponse)
+async def follow_user(
+    user_id: int,
+    current_user: DjangoUser = Depends(get_current_user),
+    db: Session = Depends(get_auth_db)
+):
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="You cannot follow yourself")
+        
+    target_user = db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    existing_follow = db.query(Follow).filter(
+        Follow.follower_id == current_user.id,
+        Follow.following_id == user_id
+    ).first()
+    
+    if existing_follow:
+        raise HTTPException(status_code=400, detail="You are already following this user")
+        
+    new_follow = Follow(follower_id=current_user.id, following_id=user_id)
+    db.add(new_follow)
+    db.commit()
+    db.refresh(new_follow)
+    
+    return new_follow
+
+@router.delete("/{user_id}/follow", status_code=status.HTTP_204_NO_CONTENT)
+async def unfollow_user(
+    user_id: int,
+    current_user: DjangoUser = Depends(get_current_user),
+    db: Session = Depends(get_auth_db)
+):
+    follow = db.query(Follow).filter(
+        Follow.follower_id == current_user.id,
+        Follow.following_id == user_id
+    ).first()
+    
+    if not follow:
+        raise HTTPException(status_code=404, detail="You are not following this user")
+        
+    db.delete(follow)
+    db.commit()
+
+@router.get("/{user_id}/followers", response_model=List[UserBasicInfo])
+async def get_followers(
+    user_id: int,
+    db: Session = Depends(get_auth_db)
+):
+    user = db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    followers = db.query(DjangoUser).join(
+        Follow, Follow.follower_id == DjangoUser.id
+    ).filter(
+        Follow.following_id == user_id
+    ).all()
+    
+    return followers
+
+@router.get("/{user_id}/following", response_model=List[UserBasicInfo])
+async def get_following(
+    user_id: int,
+    db: Session = Depends(get_auth_db)
+):
+    user = db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    following = db.query(DjangoUser).join(
+        Follow, Follow.following_id == DjangoUser.id
+    ).filter(
+        Follow.follower_id == user_id
+    ).all()
+    
+    return following
+

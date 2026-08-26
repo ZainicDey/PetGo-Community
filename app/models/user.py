@@ -25,6 +25,10 @@ class DjangoUser(Base):
     userinfo: Mapped[Optional["DjangoUserModel"]] = relationship("DjangoUserModel", back_populates="user", uselist=False)
     social_profile: Mapped[Optional["SocialProfile"]] = relationship("SocialProfile", back_populates="user", uselist=False)
 
+    @property
+    def profile_picture_url(self) -> Optional[str]:
+        return self.social_profile.profile_picture_url if self.social_profile else None
+
 class DjangoUserModel(Base):
     __tablename__ = "user_usermodel"
 
@@ -44,5 +48,6 @@ class SocialProfile(Base):
     profile_type: Mapped[str] = mapped_column(String(50), nullable=False) # 'pet' or 'user'
     gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    profile_picture_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     user: Mapped["DjangoUser"] = relationship("DjangoUser", back_populates="social_profile")

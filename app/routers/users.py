@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from typing import cast
 from sqlalchemy.orm import Session
 
 from app.database import get_auth_db, get_social_db
 from app.models.user import DjangoUser, SocialProfile
 from app.models.post import Post
 from app.models.engagement import Repost, Like
-from app.schemas.user import ProfileCreate, ProfileResponse
+from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse
 from app.schemas.post import PostResponse
 from app.dependencies import get_current_user
 
@@ -38,7 +39,8 @@ async def create_profile(
         user_id=current_user.id,
         profile_type=profile_data.profile_type,
         gender=profile_data.gender,
-        date_of_birth=profile_data.date_of_birth
+        date_of_birth=profile_data.date_of_birth,
+        profile_picture_url=profile_data.profile_picture_url
     )
     db.add(new_profile)
     db.commit()
@@ -50,7 +52,8 @@ async def create_profile(
         "profile_type": new_profile.profile_type,
         "gender": new_profile.gender,
         "date_of_birth": new_profile.date_of_birth,
-        "username": current_user.username
+        "username": current_user.username,
+        "profile_picture_url": new_profile.profile_picture_url
     }
 
 @router.get("/profile", response_model=ProfileResponse)
@@ -61,14 +64,58 @@ async def get_my_profile(
     if not current_user.social_profile:
         raise HTTPException(status_code=404, detail="Profile not found")
         
-    profile = current_user.social_profile
+    profile = cast(SocialProfile, current_user.social_profile)
     return {
         "id": profile.id,
         "user_id": profile.user_id,
         "profile_type": profile.profile_type,
         "gender": profile.gender,
         "date_of_birth": profile.date_of_birth,
-        "username": current_user.username
+        "username": current_user.username,
+        "profile_picture_url": profile.profile_picture_url
+    }
+
+@router.patch("/profile", response_model=ProfileResponse)
+async def update_profile(
+    profile_data: ProfileUpdate,
+    current_user: DjangoUser = Depends(get_current_user),
+    db: Session = Depends(get_auth_db)
+):
+    if not current_user.social_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+        
+    profile = cast(SocialProfile, current_user.social_profile)
+    
+    if profile_data.username is not None:
+        existing_user = db.query(DjangoUser).filter(
+            DjangoUser.username == profile_data.username,
+            DjangoUser.id != current_user.id
+        ).first()
+        
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username already taken")
+            
+        current_user.username = profile_data.username
+        
+    if profile_data.gender is not None:
+        profile.gender = profile_data.gender
+    if profile_data.date_of_birth is not None:
+        profile.date_of_birth = profile_data.date_of_birth
+    if profile_data.profile_picture_url is not None:
+        profile.profile_picture_url = profile_data.profile_picture_url
+        
+    db.commit()
+    db.refresh(profile)
+    db.refresh(current_user)
+    
+    return {
+        "id": profile.id,
+        "user_id": profile.user_id,
+        "profile_type": profile.profile_type,
+        "gender": profile.gender,
+        "date_of_birth": profile.date_of_birth,
+        "username": current_user.username,
+        "profile_picture_url": profile.profile_picture_url
     }
 
 from typing import List

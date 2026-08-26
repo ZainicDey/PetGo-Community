@@ -32,7 +32,7 @@ class Like(SocialBase):
     __tablename__ = "likes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    post_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    post_id: Mapped[int] = mapped_column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), index=True, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False) # References auth_user.id
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

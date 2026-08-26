@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_auth_db, get_social_db
 from app.models.user import DjangoUser, SocialProfile
 from app.models.post import Post
-from app.models.engagement import Repost
+from app.models.engagement import Repost, Like
 from app.schemas.user import ProfileCreate, ProfileResponse
 from app.schemas.post import PostResponse
 from app.dependencies import get_current_user
@@ -166,6 +166,25 @@ async def get_user_reposts(
         
     reposts = social_db.query(Repost).filter(Repost.user_id == user_id).all()
     post_ids = [repost.post_id for repost in reposts]
+    
+    if not post_ids:
+        return []
+        
+    posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
+    return posts
+
+@router.get("/{user_id}/likes", response_model=List[PostResponse])
+async def get_user_likes(
+    user_id: int,
+    auth_db: Session = Depends(get_auth_db),
+    social_db: Session = Depends(get_social_db)
+):
+    user = auth_db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    likes = social_db.query(Like).filter(Like.user_id == user_id).all()
+    post_ids = [like.post_id for like in likes]
     
     if not post_ids:
         return []

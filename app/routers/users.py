@@ -6,11 +6,20 @@ from app.database import get_auth_db, get_social_db
 from app.models.user import DjangoUser, SocialProfile
 from app.models.post import Post
 from app.models.engagement import Repost, Like
-from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse
+from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse, UserMeResponse
 from app.schemas.post import PostResponse
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_social_profile
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.get("/me", response_model=UserMeResponse)
+async def get_me(current_user: DjangoUser = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "has_social_profile": current_user.social_profile is not None
+    }
 
 @router.post("/profile", response_model=ProfileResponse)
 async def create_profile(
@@ -125,7 +134,7 @@ from app.schemas.follow import FollowResponse, UserBasicInfo
 @router.post("/{user_id}/follow", response_model=FollowResponse)
 async def follow_user(
     user_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_auth_db)
 ):
     if current_user.id == user_id:
@@ -153,7 +162,7 @@ async def follow_user(
 @router.delete("/{user_id}/follow", status_code=status.HTTP_204_NO_CONTENT)
 async def unfollow_user(
     user_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_auth_db)
 ):
     follow = db.query(Follow).filter(

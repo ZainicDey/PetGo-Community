@@ -1,22 +1,26 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Optional, Literal, List, Union
 from datetime import datetime
+
+class MediaItem(BaseModel):
+    url: str
+    media_type: Optional[Literal["image", "video"]] = "image"
+    public_id: Optional[str] = None
 
 class PostCreate(BaseModel):
     content: str = Field(..., min_length=1)
-    media_url: Optional[str] = None
-    media_type: Optional[Literal["image", "video"]] = None
+    media: Optional[List[Union[MediaItem, str]]] = Field(default_factory=list)
 
 class PostResponse(BaseModel):
     id: int
     author_id: int
     content: str
-    media_url: Optional[str] = None
-    media_type: Optional[str] = None
+    media: Optional[List[MediaItem]] = Field(default_factory=list)
     created_at: datetime
 
     class Config:
         from_attributes = True
+
 
 class RepostResponse(BaseModel):
     id: int

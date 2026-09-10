@@ -37,3 +37,14 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise credentials_exception
     
     return user
+
+def require_social_profile(current_user: DjangoUser = Depends(get_current_user)):
+    """
+    Ensures the authenticated user has created a SocialProfile before proceeding.
+    """
+    if not current_user.social_profile:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Social profile required. Please complete your profile first."
+        )
+    return current_user

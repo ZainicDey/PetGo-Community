@@ -7,7 +7,7 @@ from app.models.engagement import Comment
 from app.models.post import Post
 from app.models.user import DjangoUser
 from app.schemas.comment import CommentCreate, CommentUpdate, CommentResponse, CommentTree
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_social_profile
 
 router = APIRouter(prefix="/comments", tags=["Comments"])
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/comments", tags=["Comments"])
 @router.post("/", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
 async def create_comment(
     data: CommentCreate,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db),
 ):
     """Create a top-level comment or a reply to an existing comment."""
@@ -83,7 +83,7 @@ async def get_comment(
 async def update_comment(
     comment_id: int,
     data: CommentUpdate,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db),
 ):
     """Update a comment's content. Only the author can edit."""
@@ -104,7 +104,7 @@ async def update_comment(
 @router.delete("/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_comment(
     comment_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db),
 ):
     """Delete a comment and all its nested replies. Only the author can delete."""

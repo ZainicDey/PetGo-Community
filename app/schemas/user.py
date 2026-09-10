@@ -26,3 +26,12 @@ class ProfileResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UserMeResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+    has_social_profile: bool
+
+    class Config:
+        from_attributes = True

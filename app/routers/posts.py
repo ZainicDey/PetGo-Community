@@ -3,23 +3,92 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.database import get_social_db, get_auth_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_social_profile
 from app.models.user import DjangoUser
 from app.models.post import Post
 from app.models.engagement import Repost, Like
-from app.schemas.post import RepostResponse, LikeResponse
+from app.schemas.post import PostCreate, PostResponse, RepostResponse, LikeResponse
 from app.schemas.follow import UserBasicInfo
+from app.utils.media import process_media_list, delete_post_media_files
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
-@router.get("/")
-async def get_posts():
-    return {"message": "Posts endpoint placeholder"}
+@router.get("/", response_model=List[PostResponse])
+async def get_posts(
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_social_db)
+):
+    posts = (
+        db.query(Post)
+        .order_by(Post.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return posts
+
+@router.post("/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+async def create_post(
+    data: PostCreate,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_social_db)
+):
+    """
+    Create a new post.
+    Accepts content and an array of media (images/videos).
+    Automatically extracts public_id and media_type from Cloudinary URLs if not provided.
+    """
+    processed_media = process_media_list(data.media)
+
+    new_post = Post(
+        author_id=current_user.id,
+        content=data.content,
+        media=processed_media,
+    )
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
+    return new_post
+
+@router.get("/{post_id}", response_model=PostResponse)
+async def get_post(
+    post_id: int,
+    db: Session = Depends(get_social_db)
+):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return post
+
+@router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_post(
+    post_id: int,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_social_db)
+):
+    """
+    Delete a post and its associated media files on Cloudinary.
+    """
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    if post.author_id != current_user.id and not getattr(current_user, "is_superuser", False):
+        raise HTTPException(status_code=403, detail="You can only delete your own posts")
+
+    # Send deletion requests to Cloudinary for all attached media items
+    if post.media:
+        delete_post_media_files(post.media)  # type: ignore
+
+    db.delete(post)
+    db.commit()
+
 
 @router.post("/{post_id}/repost", response_model=RepostResponse)
 async def repost_post(
     post_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db)
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
@@ -44,7 +113,7 @@ async def repost_post(
 @router.delete("/{post_id}/repost", status_code=status.HTTP_204_NO_CONTENT)
 async def unrepost_post(
     post_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db)
 ):
     repost = db.query(Repost).filter(
@@ -80,7 +149,7 @@ async def get_post_reposters(
 @router.post("/{post_id}/like", response_model=LikeResponse)
 async def like_post(
     post_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db)
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
@@ -105,7 +174,7 @@ async def like_post(
 @router.delete("/{post_id}/like", status_code=status.HTTP_204_NO_CONTENT)
 async def unlike_post(
     post_id: int,
-    current_user: DjangoUser = Depends(get_current_user),
+    current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db)
 ):
     like = db.query(Like).filter(

@@ -17,6 +17,9 @@ class PostResponse(BaseModel):
     content: str
     media: Optional[List[MediaItem]] = Field(default_factory=list)
     created_at: datetime
+    likes_count: int = 0
+    reposts_count: int = 0
+    comments_count: int = 0
 
     class Config:
         from_attributes = True

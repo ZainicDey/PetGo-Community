@@ -1,6 +1,6 @@
-from sqlalchemy import Integer, Text, DateTime
+from sqlalchemy import Integer, Text, DateTime, select, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, column_property
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -16,3 +16,14 @@ class Post(SocialBase):
     media: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+from app.models.engagement import Like, Comment, Repost
+
+Post.likes_count = column_property(
+    select(func.count(Like.id)).where(Like.post_id == Post.id).correlate_except(Like).scalar_subquery()
+)
+Post.comments_count = column_property(
+    select(func.count(Comment.id)).where(Comment.post_id == Post.id).correlate_except(Comment).scalar_subquery()
+)
+Post.reposts_count = column_property(
+    select(func.count(Repost.id)).where(Repost.post_id == Post.id).correlate_except(Repost).scalar_subquery()
+)

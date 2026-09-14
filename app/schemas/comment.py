@@ -1,6 +1,7 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime
+from app.schemas.follow import UserBasicInfo
 
 
 class CommentCreate(BaseModel):
@@ -17,6 +18,7 @@ class CommentResponse(BaseModel):
     id: int
     post_id: int
     author_id: int
+    author: Optional[UserBasicInfo] = None
     parent_id: Optional[int] = None
     content: str
     created_at: datetime
@@ -30,6 +32,7 @@ class CommentTree(BaseModel):
     id: int
     post_id: int
     author_id: int
+    author: Optional[UserBasicInfo] = None
     parent_id: Optional[int] = None
     content: str
     created_at: datetime

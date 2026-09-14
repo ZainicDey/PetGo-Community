@@ -2,12 +2,13 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.database import get_social_db
+from app.database import get_social_db, get_auth_db
 from app.models.engagement import Comment
 from app.models.post import Post
 from app.models.user import DjangoUser
 from app.schemas.comment import CommentCreate, CommentUpdate, CommentResponse, CommentTree
 from app.dependencies import get_current_user, require_social_profile
+from app.utils.user import attach_authors
 
 router = APIRouter(prefix="/comments", tags=["Comments"])
 
@@ -49,6 +50,7 @@ async def create_comment(
 async def get_post_comments(
     post_id: int,
     db: Session = Depends(get_social_db),
+    auth_db: Session = Depends(get_auth_db)
 ):
     """Get all top-level comments for a post, with nested replies."""
     post = db.query(Post).filter(Post.id == post_id).first()
@@ -63,20 +65,21 @@ async def get_post_comments(
         .all()
     )
 
-    return comments
+    return attach_authors(comments, auth_db)
 
 
 @router.get("/{comment_id}", response_model=CommentTree)
 async def get_comment(
     comment_id: int,
     db: Session = Depends(get_social_db),
+    auth_db: Session = Depends(get_auth_db)
 ):
     """Get a single comment with all its nested replies."""
     comment = db.query(Comment).filter(Comment.id == comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
 
-    return comment
+    return attach_authors([comment], auth_db)[0]
 
 
 @router.put("/{comment_id}", response_model=CommentResponse)

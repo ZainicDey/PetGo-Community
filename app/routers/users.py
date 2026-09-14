@@ -1,14 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import cast
-from sqlalchemy.orm import Session
+from typing import cast, Optional, List
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_auth_db, get_social_db
 from app.models.user import DjangoUser, SocialProfile
 from app.models.post import Post
 from app.models.engagement import Repost, Like
-from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse, UserMeResponse
+from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse, UserMeResponse, UsernameCheckRequest, UsernameCheckResponse, ActivityItem
 from app.schemas.post import PostResponse
-from app.dependencies import get_current_user, require_social_profile
+from app.dependencies import get_current_user, require_social_profile, get_optional_current_user
+from app.utils.user import attach_authors
+from app.utils.engagement import attach_user_engagements
+from app.models.follow import Follow
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -20,6 +23,15 @@ async def get_me(current_user: DjangoUser = Depends(get_current_user)):
         "email": current_user.email,
         "has_social_profile": current_user.social_profile is not None
     }
+
+@router.post("/check-username", response_model=UsernameCheckResponse)
+async def check_username(
+    request: UsernameCheckRequest,
+    current_user: DjangoUser = Depends(get_current_user),
+    db: Session = Depends(get_auth_db)
+):
+    exists = db.query(DjangoUser).filter(DjangoUser.username == request.username).first() is not None
+    return {"exists": exists, "available": not exists}
 
 @router.post("/profile", response_model=ProfileResponse)
 async def create_profile(
@@ -55,6 +67,8 @@ async def create_profile(
     db.commit()
     db.refresh(new_profile)
     
+    follower_count = db.query(Follow).filter(Follow.following_id == current_user.id).count()
+    
     return {
         "id": new_profile.id,
         "user_id": new_profile.user_id,
@@ -62,7 +76,8 @@ async def create_profile(
         "gender": new_profile.gender,
         "date_of_birth": new_profile.date_of_birth,
         "username": current_user.username,
-        "profile_picture_url": new_profile.profile_picture_url
+        "profile_picture_url": new_profile.profile_picture_url,
+        "follower_count": follower_count
     }
 
 @router.get("/profile", response_model=ProfileResponse)
@@ -74,6 +89,9 @@ async def get_my_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
         
     profile = cast(SocialProfile, current_user.social_profile)
+    
+    follower_count = db.query(Follow).filter(Follow.following_id == current_user.id).count()
+    
     return {
         "id": profile.id,
         "user_id": profile.user_id,
@@ -81,7 +99,8 @@ async def get_my_profile(
         "gender": profile.gender,
         "date_of_birth": profile.date_of_birth,
         "username": current_user.username,
-        "profile_picture_url": profile.profile_picture_url
+        "profile_picture_url": profile.profile_picture_url,
+        "follower_count": follower_count
     }
 
 @router.patch("/profile", response_model=ProfileResponse)
@@ -106,6 +125,8 @@ async def update_profile(
             
         current_user.username = profile_data.username
         
+    if profile_data.profile_type is not None:
+        profile.profile_type = profile_data.profile_type
     if profile_data.gender is not None:
         profile.gender = profile_data.gender
     if profile_data.date_of_birth is not None:
@@ -117,6 +138,8 @@ async def update_profile(
     db.refresh(profile)
     db.refresh(current_user)
     
+    follower_count = db.query(Follow).filter(Follow.following_id == current_user.id).count()
+    
     return {
         "id": profile.id,
         "user_id": profile.user_id,
@@ -124,11 +147,11 @@ async def update_profile(
         "gender": profile.gender,
         "date_of_birth": profile.date_of_birth,
         "username": current_user.username,
-        "profile_picture_url": profile.profile_picture_url
+        "profile_picture_url": profile.profile_picture_url,
+        "follower_count": follower_count
     }
 
 from typing import List
-from app.models.follow import Follow
 from app.schemas.follow import FollowResponse, UserBasicInfo
 
 @router.post("/{user_id}/follow", response_model=FollowResponse)
@@ -185,7 +208,7 @@ async def get_followers(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    followers = db.query(DjangoUser).join(
+    followers = db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).join(
         Follow, Follow.follower_id == DjangoUser.id
     ).filter(
         Follow.following_id == user_id
@@ -202,7 +225,7 @@ async def get_following(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    following = db.query(DjangoUser).join(
+    following = db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).join(
         Follow, Follow.following_id == DjangoUser.id
     ).filter(
         Follow.follower_id == user_id
@@ -214,7 +237,8 @@ async def get_following(
 async def get_user_reposts(
     user_id: int,
     auth_db: Session = Depends(get_auth_db),
-    social_db: Session = Depends(get_social_db)
+    social_db: Session = Depends(get_social_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
     user = auth_db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
     if not user:
@@ -227,23 +251,107 @@ async def get_user_reposts(
         return []
         
     posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
-    return posts
+    
+    current_user_id = cast(int, optional_user.id) if optional_user else None
+    posts = attach_user_engagements(posts, current_user_id, social_db)
+    return attach_authors(posts, auth_db, current_user_id)
 
 @router.get("/{user_id}/likes", response_model=List[PostResponse])
 async def get_user_likes(
     user_id: int,
     auth_db: Session = Depends(get_auth_db),
-    social_db: Session = Depends(get_social_db)
+    social_db: Session = Depends(get_social_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
     user = auth_db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    likes = social_db.query(Like).filter(Like.user_id == user_id).all()
+    # Sort likes new to old
+    likes = social_db.query(Like).filter(Like.user_id == user_id).order_by(Like.created_at.desc()).all()
     post_ids = [like.post_id for like in likes]
     
     if not post_ids:
         return []
         
     posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
-    return posts
+    post_dict = {post.id: post for post in posts}
+    ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
+    
+    current_user_id = cast(int, optional_user.id) if optional_user else None
+    ordered_posts = attach_user_engagements(ordered_posts, current_user_id, social_db)
+    return attach_authors(ordered_posts, auth_db, current_user_id)
+
+@router.get("/{user_id}/posts", response_model=List[PostResponse])
+async def get_user_posts(
+    user_id: int,
+    auth_db: Session = Depends(get_auth_db),
+    social_db: Session = Depends(get_social_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
+):
+    user = auth_db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    posts = social_db.query(Post).filter(Post.author_id == user_id).order_by(Post.created_at.desc()).all()
+    
+    current_user_id = cast(int, optional_user.id) if optional_user else None
+    posts = attach_user_engagements(posts, current_user_id, social_db)
+    return attach_authors(posts, auth_db, current_user_id)
+
+@router.get("/{user_id}/activity", response_model=List[ActivityItem])
+async def get_user_activity(
+    user_id: int,
+    auth_db: Session = Depends(get_auth_db),
+    social_db: Session = Depends(get_social_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
+):
+    user = auth_db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    likes = social_db.query(Like).filter(Like.user_id == user_id).all()
+    reposts = social_db.query(Repost).filter(Repost.user_id == user_id).all()
+    
+    activities = []
+    for like in likes:
+        activities.append({
+            "id": f"like_{like.id}",
+            "type": "like",
+            "post_id": like.post_id,
+            "timestamp": like.created_at
+        })
+        
+    for repost in reposts:
+        activities.append({
+            "id": f"repost_{repost.id}",
+            "type": "repost",
+            "post_id": repost.post_id,
+            "timestamp": repost.created_at
+        })
+        
+    # Sort activities by timestamp descending (latest to oldest)
+    activities.sort(key=lambda x: x["timestamp"], reverse=True)
+    
+    post_ids = list(set([a["post_id"] for a in activities]))
+    if not post_ids:
+        return []
+        
+    posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
+    current_user_id = cast(int, optional_user.id) if optional_user else None
+    posts = attach_user_engagements(posts, current_user_id, social_db)
+    posts = attach_authors(posts, auth_db, current_user_id)
+    
+    post_dict = {post.id: post for post in posts}
+    
+    result = []
+    for a in activities:
+        if a["post_id"] in post_dict:
+            result.append({
+                "id": a["id"],
+                "type": a["type"],
+                "post": post_dict[a["post_id"]],
+                "timestamp": a["timestamp"]
+            })
+            
+    return result

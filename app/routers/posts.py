@@ -1,15 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional, cast
 
 from app.database import get_social_db, get_auth_db
-from app.dependencies import get_current_user, require_social_profile
+from app.dependencies import get_current_user, require_social_profile, get_optional_current_user
 from app.models.user import DjangoUser
 from app.models.post import Post
 from app.models.engagement import Repost, Like
 from app.schemas.post import PostCreate, PostResponse, RepostResponse, LikeResponse
 from app.schemas.follow import UserBasicInfo
 from app.utils.media import process_media_list, delete_post_media_files
+from app.utils.user import attach_authors
+from app.utils.engagement import attach_user_engagements
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
@@ -17,7 +19,9 @@ router = APIRouter(prefix="/posts", tags=["Posts"])
 async def get_posts(
     limit: int = 20,
     offset: int = 0,
-    db: Session = Depends(get_social_db)
+    db: Session = Depends(get_social_db),
+    auth_db: Session = Depends(get_auth_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
     posts = (
         db.query(Post)
@@ -26,7 +30,9 @@ async def get_posts(
         .limit(limit)
         .all()
     )
-    return posts
+    user_id = cast(int, optional_user.id) if optional_user else None
+    posts = attach_user_engagements(posts, user_id, db)
+    return attach_authors(posts, auth_db, user_id)
 
 @router.post("/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 async def create_post(
@@ -54,12 +60,17 @@ async def create_post(
 @router.get("/{post_id}", response_model=PostResponse)
 async def get_post(
     post_id: int,
-    db: Session = Depends(get_social_db)
+    db: Session = Depends(get_social_db),
+    auth_db: Session = Depends(get_auth_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    return post
+        
+    user_id = cast(int, optional_user.id) if optional_user else None
+    post = attach_user_engagements([post], user_id, db)[0]
+    return attach_authors([post], auth_db, user_id)[0]
 
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_post(

@@ -2,6 +2,7 @@ from sqlalchemy import Integer, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.user import DjangoUser
 from datetime import datetime
 
 class Follow(Base):

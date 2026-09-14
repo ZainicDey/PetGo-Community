@@ -28,6 +28,10 @@ class DjangoUser(Base):
     @property
     def profile_picture_url(self) -> Optional[str]:
         return self.social_profile.profile_picture_url if self.social_profile else None
+        
+    @property
+    def profile_type(self) -> Optional[str]:
+        return self.social_profile.profile_type if self.social_profile else None
 
 class DjangoUserModel(Base):
     __tablename__ = "user_usermodel"

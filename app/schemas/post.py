@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List, Union
 from datetime import datetime
+from app.schemas.follow import UserBasicInfo
 
 class MediaItem(BaseModel):
     url: str
@@ -14,12 +15,15 @@ class PostCreate(BaseModel):
 class PostResponse(BaseModel):
     id: int
     author_id: int
+    author: Optional[UserBasicInfo] = None
     content: str
     media: Optional[List[MediaItem]] = Field(default_factory=list)
     created_at: datetime
     likes_count: int = 0
     reposts_count: int = 0
     comments_count: int = 0
+    is_liked: bool = False
+    is_reposted: bool = False
 
     class Config:
         from_attributes = True

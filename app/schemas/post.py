@@ -11,6 +11,7 @@ class MediaItem(BaseModel):
 class PostCreate(BaseModel):
     content: str = Field(..., min_length=1)
     media: Optional[List[Union[MediaItem, str]]] = Field(default_factory=list)
+    quoted_post_id: Optional[int] = None
 
 class PostResponse(BaseModel):
     id: int
@@ -24,6 +25,9 @@ class PostResponse(BaseModel):
     comments_count: int = 0
     is_liked: bool = False
     is_reposted: bool = False
+    quoted_post_id: Optional[int] = None
+    quoted_post: Optional["PostResponse"] = None
+    reposter: Optional[UserBasicInfo] = None
 
     class Config:
         from_attributes = True

@@ -22,21 +22,7 @@ class CommentResponse(BaseModel):
     parent_id: Optional[int] = None
     content: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class CommentTree(BaseModel):
-    """A comment with its nested replies (recursive)."""
-    id: int
-    post_id: int
-    author_id: int
-    author: Optional[UserBasicInfo] = None
-    parent_id: Optional[int] = None
-    content: str
-    created_at: datetime
-    replies: List["CommentTree"] = []
+    replies_count: int = 0
 
     class Config:
         from_attributes = True

@@ -15,6 +15,9 @@ from app.utils.engagement import attach_user_engagements
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
+from sqlalchemy import select, literal, union_all, text, Integer
+from sqlalchemy.orm import joinedload
+
 @router.get("/", response_model=List[PostResponse])
 async def get_posts(
     limit: int = 20,
@@ -23,16 +26,65 @@ async def get_posts(
     auth_db: Session = Depends(get_auth_db),
     optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
-    posts = (
-        db.query(Post)
-        .order_by(Post.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    post_query = select(
+        Post.id.label("post_id"),
+        Post.created_at.label("created_at"),
+        literal(False).label("is_repost"),
+        literal(None, type_=Integer).label("reposter_id")
     )
+    
+    repost_query = select(
+        Repost.post_id.label("post_id"),
+        Repost.created_at.label("created_at"),
+        literal(True).label("is_repost"),
+        Repost.user_id.label("reposter_id")
+    )
+    
+    combined_query = union_all(post_query, repost_query).order_by(text("created_at DESC")).offset(offset).limit(limit)
+    feed_items = db.execute(combined_query).fetchall()
+    
+    if not feed_items:
+        return []
+        
+    post_ids = [item.post_id for item in feed_items]
+    posts = db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
+    post_map = {p.id: p for p in posts}
+    
     user_id = cast(int, optional_user.id) if optional_user else None
-    posts = attach_user_engagements(posts, user_id, db)
-    return attach_authors(posts, auth_db, user_id)
+    
+    # Extract reposter_ids to fetch them
+    reposter_ids = [item.reposter_id for item in feed_items if item.is_repost]
+    reposters = auth_db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).filter(DjangoUser.id.in_(reposter_ids)).all()
+    reposter_map = {}
+    
+    # We can also attach is_followed for reposters if needed
+    followed_user_ids = set()
+    if user_id and reposter_ids:
+        from app.models.follow import Follow
+        follows = auth_db.query(Follow).filter(
+            Follow.follower_id == user_id,
+            Follow.following_id.in_(reposter_ids)
+        ).all()
+        followed_user_ids = {f.following_id for f in follows}
+        
+    for reposter in reposters:
+        info = UserBasicInfo.model_validate(reposter)
+        if reposter.id in followed_user_ids:
+            info.is_followed = True
+        reposter_map[reposter.id] = info
+
+    final_posts = []
+    for item in feed_items:
+        if item.post_id in post_map:
+            # We must make a copy if the same post is reposted multiple times in the feed
+            import copy
+            p = copy.copy(post_map[item.post_id])
+            if item.is_repost and item.reposter_id in reposter_map:
+                p.reposter = reposter_map[item.reposter_id]
+            final_posts.append(p)
+            
+    final_posts = attach_user_engagements(final_posts, user_id, db)
+    return attach_authors(final_posts, auth_db, user_id)
 
 @router.post("/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 async def create_post(
@@ -51,6 +103,7 @@ async def create_post(
         author_id=current_user.id,
         content=data.content,
         media=processed_media,
+        quoted_post_id=data.quoted_post_id,
     )
     db.add(new_post)
     db.commit()

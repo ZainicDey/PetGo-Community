@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import date
+from typing import Optional, List
 
 class ProfileCreate(BaseModel):
     username: str = Field(..., min_length=1, max_length=150)
@@ -57,3 +58,33 @@ class ActivityItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+class PetProfileCreate(BaseModel):
+    username: str = Field(..., min_length=1, max_length=150)
+    gender: Optional[str] = Field(None, max_length=20)
+    date_of_birth: Optional[date] = None
+    profile_picture_url: Optional[str] = Field(None, max_length=255)
+
+class SwitchableProfile(BaseModel):
+    user_id: int
+    username: str
+    profile_type: str
+    profile_picture_url: Optional[str] = None
+    is_owner: bool
+
+class SwitchableProfilesResponse(BaseModel):
+    active_profile_id: int
+    profiles: List[SwitchableProfile]
+
+class SwitchProfileRequest(BaseModel):
+    target_user_id: int
+
+class SwitchProfileUser(BaseModel):
+    id: int
+    username: str
+    profile_type: str
+
+class SwitchProfileResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: SwitchProfileUser

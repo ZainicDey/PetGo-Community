@@ -6,7 +6,7 @@ from app.database import get_social_db, get_auth_db
 from app.models.engagement import Comment
 from app.models.post import Post
 from app.models.user import DjangoUser
-from app.schemas.comment import CommentCreate, CommentUpdate, CommentResponse, CommentTree
+from app.schemas.comment import CommentCreate, CommentUpdate, CommentResponse
 from app.dependencies import get_current_user, require_social_profile
 from app.utils.user import attach_authors
 
@@ -46,40 +46,67 @@ async def create_comment(
     return comment
 
 
-@router.get("/post/{post_id}", response_model=List[CommentTree])
+@router.get("/post/{post_id}", response_model=List[CommentResponse])
 async def get_post_comments(
     post_id: int,
+    limit: int = 10,
+    offset: int = 0,
     db: Session = Depends(get_social_db),
     auth_db: Session = Depends(get_auth_db)
 ):
-    """Get all top-level comments for a post, with nested replies."""
+    """Get all top-level comments for a post, with pagination."""
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    # Fetch only top-level comments; replies are eager-loaded via the 'selectin' relationship
     comments = (
         db.query(Comment)
         .filter(Comment.post_id == post_id, Comment.parent_id.is_(None))
         .order_by(Comment.created_at.asc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 
     return attach_authors(comments, auth_db)
 
 
-@router.get("/{comment_id}", response_model=CommentTree)
+@router.get("/{comment_id}", response_model=CommentResponse)
 async def get_comment(
     comment_id: int,
     db: Session = Depends(get_social_db),
     auth_db: Session = Depends(get_auth_db)
 ):
-    """Get a single comment with all its nested replies."""
+    """Get a single comment."""
     comment = db.query(Comment).filter(Comment.id == comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
 
     return attach_authors([comment], auth_db)[0]
+
+@router.get("/{comment_id}/replies", response_model=List[CommentResponse])
+async def get_comment_replies(
+    comment_id: int,
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_social_db),
+    auth_db: Session = Depends(get_auth_db)
+):
+    """Get direct replies to a comment, with pagination."""
+    comment = db.query(Comment).filter(Comment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    replies = (
+        db.query(Comment)
+        .filter(Comment.parent_id == comment_id)
+        .order_by(Comment.created_at.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return attach_authors(replies, auth_db)
 
 
 @router.put("/{comment_id}", response_model=CommentResponse)

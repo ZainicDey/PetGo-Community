@@ -55,3 +55,11 @@ class SocialProfile(Base):
     profile_picture_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     user: Mapped["DjangoUser"] = relationship("DjangoUser", back_populates="social_profile")
+
+class ProfileLink(Base):
+    __tablename__ = "user_profile_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("auth_user.id", ondelete="CASCADE"), index=True)
+    pet_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("auth_user.id", ondelete="CASCADE"), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

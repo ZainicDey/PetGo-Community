@@ -8,8 +8,8 @@ def get_all_items(items):
     all_items = []
     for item in items:
         all_items.append(item)
-        if hasattr(item, 'replies') and item.replies:
-            all_items.extend(get_all_items(item.replies))
+        if hasattr(item, 'quoted_post') and item.quoted_post:
+            all_items.extend(get_all_items([item.quoted_post]))
     return all_items
 
 def attach_authors(items: List[Any], auth_db: Session, current_user_id: Optional[int] = None) -> List[Any]:

@@ -3,12 +3,19 @@ from typing import cast, Optional, List
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_auth_db, get_social_db
-from app.models.user import DjangoUser, SocialProfile
+from app.models.user import DjangoUser, SocialProfile, ProfileLink
 from app.models.post import Post
 from app.models.engagement import Repost, Like
-from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse, UserMeResponse, UsernameCheckRequest, UsernameCheckResponse, ActivityItem
+from app.schemas.user import (
+    ProfileCreate, ProfileUpdate, ProfileResponse, UserMeResponse, 
+    UsernameCheckRequest, UsernameCheckResponse, ActivityItem,
+    PetProfileCreate, SwitchableProfile, SwitchableProfilesResponse, 
+    SwitchProfileRequest, SwitchProfileResponse, SwitchProfileUser
+)
 from app.schemas.post import PostResponse
-from app.dependencies import get_current_user, require_social_profile, get_optional_current_user
+from app.dependencies import get_current_user, require_social_profile, get_optional_current_user, SECRET_KEY, ALGORITHM
+from datetime import datetime, timedelta
+from jose import jwt
 from app.utils.user import attach_authors
 from app.utils.engagement import attach_user_engagements
 from app.models.follow import Follow
@@ -79,6 +86,201 @@ async def create_profile(
         "profile_picture_url": new_profile.profile_picture_url,
         "follower_count": follower_count
     }
+
+@router.post("/pet-profile", response_model=ProfileResponse)
+async def create_pet_profile(
+    profile_data: PetProfileCreate,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_auth_db)
+):
+    # Determine the actual owner
+    owner_id = current_user.id
+    if current_user.social_profile and current_user.social_profile.profile_type == "pet":
+        # Current user is a pet, find the owner
+        link = db.query(ProfileLink).filter(ProfileLink.pet_user_id == current_user.id).first()
+        if not link:
+            raise HTTPException(status_code=500, detail="Pet profile is not linked to an owner")
+        owner_id = link.owner_user_id
+
+    # Check if username is taken
+    existing_user = db.query(DjangoUser).filter(DjangoUser.username == profile_data.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    # Create shadow DjangoUser
+    new_user = DjangoUser(
+        username=profile_data.username,
+        password="!", # Unusable password
+        first_name="",
+        last_name="",
+        email=f"{profile_data.username}@pet.local",
+        is_superuser=False,
+        is_staff=False,
+        is_active=True,
+        date_joined=datetime.utcnow()
+    )
+    db.add(new_user)
+    db.flush()
+
+    # Create SocialProfile
+    new_profile = SocialProfile(
+        user_id=new_user.id,
+        profile_type="pet",
+        gender=profile_data.gender,
+        date_of_birth=profile_data.date_of_birth,
+        profile_picture_url=profile_data.profile_picture_url
+    )
+    db.add(new_profile)
+
+    # Create ProfileLink
+    new_link = ProfileLink(
+        owner_user_id=owner_id,
+        pet_user_id=new_user.id
+    )
+    db.add(new_link)
+    
+    db.commit()
+    db.refresh(new_profile)
+
+    return {
+        "id": new_profile.id,
+        "user_id": new_profile.user_id,
+        "profile_type": new_profile.profile_type,
+        "gender": new_profile.gender,
+        "date_of_birth": new_profile.date_of_birth,
+        "username": new_user.username,
+        "profile_picture_url": new_profile.profile_picture_url,
+        "follower_count": 0
+    }
+
+@router.get("/switchable-profiles", response_model=SwitchableProfilesResponse)
+async def get_switchable_profiles(
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_auth_db)
+):
+    # Determine the actual owner
+    owner_id = current_user.id
+    if current_user.social_profile.profile_type == "pet":
+        link = db.query(ProfileLink).filter(ProfileLink.pet_user_id == current_user.id).first()
+        if link:
+            owner_id = link.owner_user_id
+
+    # Fetch owner
+    owner = db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).filter(DjangoUser.id == owner_id).first()
+    if not owner or not owner.social_profile:
+        raise HTTPException(status_code=404, detail="Owner profile not found")
+
+    # Fetch pets
+    links = db.query(ProfileLink).filter(ProfileLink.owner_user_id == owner_id).all()
+    pet_ids = [l.pet_user_id for l in links]
+    pets = db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).filter(DjangoUser.id.in_(pet_ids)).all() if pet_ids else []
+
+    profiles = []
+    # Add owner
+    profiles.append(SwitchableProfile(
+        user_id=owner.id,
+        username=owner.username,
+        profile_type=owner.social_profile.profile_type,
+        profile_picture_url=owner.social_profile.profile_picture_url,
+        is_owner=True
+    ))
+
+    # Add pets
+    for pet in pets:
+        if pet.social_profile:
+            profiles.append(SwitchableProfile(
+                user_id=pet.id,
+                username=pet.username,
+                profile_type=pet.social_profile.profile_type,
+                profile_picture_url=pet.social_profile.profile_picture_url,
+                is_owner=False
+            ))
+
+    return SwitchableProfilesResponse(
+        active_profile_id=current_user.id,
+        profiles=profiles
+    )
+
+@router.post("/switch-profile", response_model=SwitchProfileResponse)
+async def switch_profile(
+    request: SwitchProfileRequest,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_auth_db)
+):
+    # Verify the target user belongs to the same owner group
+    target_user_id = request.target_user_id
+    
+    # Determine current owner
+    owner_id = current_user.id
+    if current_user.social_profile.profile_type == "pet":
+        link = db.query(ProfileLink).filter(ProfileLink.pet_user_id == current_user.id).first()
+        if link:
+            owner_id = link.owner_user_id
+
+    # Check if target is owner or a pet belonging to owner
+    is_valid_target = False
+    if target_user_id == owner_id:
+        is_valid_target = True
+    else:
+        # Check if target is a pet of the owner
+        target_link = db.query(ProfileLink).filter(
+            ProfileLink.owner_user_id == owner_id,
+            ProfileLink.pet_user_id == target_user_id
+        ).first()
+        if target_link:
+            is_valid_target = True
+
+    if not is_valid_target:
+        raise HTTPException(status_code=403, detail="Not authorized to switch to this profile")
+
+    target_user = db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).filter(DjangoUser.id == target_user_id).first()
+    if not target_user or not target_user.social_profile:
+        raise HTTPException(status_code=404, detail="Target profile not found")
+
+    # Generate JWT token
+    access_token_expires = timedelta(days=1)
+    expire = datetime.utcnow() + access_token_expires
+    to_encode = {"exp": expire, "user_id": str(target_user_id), "token_type": "access"}
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+    return SwitchProfileResponse(
+        access_token=encoded_jwt,
+        token_type="bearer",
+        user=SwitchProfileUser(
+            id=target_user.id,
+            username=target_user.username,
+            profile_type=target_user.social_profile.profile_type
+        )
+    )
+
+@router.get("/{user_id}/profile", response_model=ProfileResponse)
+async def get_user_profile(
+    user_id: int,
+    db: Session = Depends(get_auth_db)
+):
+    user = db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if not user.social_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+        
+    profile = cast(SocialProfile, user.social_profile)
+    
+    follower_count = db.query(Follow).filter(Follow.following_id == user.id).count()
+    
+    return {
+        "id": profile.id,
+        "user_id": profile.user_id,
+        "profile_type": profile.profile_type,
+        "gender": profile.gender,
+        "date_of_birth": profile.date_of_birth,
+        "username": user.username,
+        "profile_picture_url": profile.profile_picture_url,
+        "follower_count": follower_count
+    }
+
+
 
 @router.get("/profile", response_model=ProfileResponse)
 async def get_my_profile(
@@ -244,17 +446,20 @@ async def get_user_reposts(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    reposts = social_db.query(Repost).filter(Repost.user_id == user_id).all()
+    # Sort reposts new to old
+    reposts = social_db.query(Repost).filter(Repost.user_id == user_id).order_by(Repost.created_at.desc()).all()
     post_ids = [repost.post_id for repost in reposts]
     
     if not post_ids:
         return []
         
     posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
+    post_dict = {post.id: post for post in posts}
+    ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
     
     current_user_id = cast(int, optional_user.id) if optional_user else None
-    posts = attach_user_engagements(posts, current_user_id, social_db)
-    return attach_authors(posts, auth_db, current_user_id)
+    ordered_posts = attach_user_engagements(ordered_posts, current_user_id, social_db)
+    return attach_authors(ordered_posts, auth_db, current_user_id)
 
 @router.get("/{user_id}/likes", response_model=List[PostResponse])
 async def get_user_likes(

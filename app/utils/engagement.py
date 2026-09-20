@@ -10,7 +10,16 @@ def attach_user_engagements(items: List[Any], user_id: Optional[int] = None, db:
             item.is_reposted = False
         return items
         
-    item_ids = [item.id for item in items if hasattr(item, 'id')]
+    def get_all_items_eng(items_list):
+        all_i = []
+        for i in items_list:
+            all_i.append(i)
+            if hasattr(i, 'quoted_post') and i.quoted_post:
+                all_i.extend(get_all_items_eng([i.quoted_post]))
+        return all_i
+
+    all_items = get_all_items_eng(items)
+    item_ids = [item.id for item in all_items if hasattr(item, 'id')]
     
     # Find which of these posts the user liked
     user_likes = db.query(Like.post_id).filter(Like.user_id == user_id, Like.post_id.in_(item_ids)).all()
@@ -20,7 +29,7 @@ def attach_user_engagements(items: List[Any], user_id: Optional[int] = None, db:
     user_reposts = db.query(Repost.post_id).filter(Repost.user_id == user_id, Repost.post_id.in_(item_ids)).all()
     reposted_post_ids = {row[0] for row in user_reposts}
     
-    for item in items:
+    for item in all_items:
         if hasattr(item, 'id'):
             item.is_liked = item.id in liked_post_ids
             item.is_reposted = item.id in reposted_post_ids

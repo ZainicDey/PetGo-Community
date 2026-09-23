@@ -7,6 +7,7 @@ class ProfileCreate(BaseModel):
     username: str = Field(..., min_length=1, max_length=150)
     profile_type: str = Field(..., min_length=1, max_length=50) # 'pet' or 'user'
     gender: Optional[str] = Field(None, max_length=20)
+    pet_type: Optional[str] = Field(None, max_length=50)
     date_of_birth: Optional[date] = None
     profile_picture_url: Optional[str] = Field(None, max_length=255)
 
@@ -14,6 +15,7 @@ class ProfileUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=1, max_length=150)
     profile_type: Optional[str] = Field(None, max_length=50)
     gender: Optional[str] = Field(None, max_length=20)
+    pet_type: Optional[str] = Field(None, max_length=50)
     date_of_birth: Optional[date] = None
     profile_picture_url: Optional[str] = Field(None, max_length=255)
 
@@ -22,6 +24,7 @@ class ProfileResponse(BaseModel):
     user_id: int
     profile_type: str
     gender: Optional[str] = None
+    pet_type: Optional[str] = None
     date_of_birth: Optional[date] = None
     username: str
     profile_picture_url: Optional[str] = None
@@ -62,6 +65,7 @@ class ActivityItem(BaseModel):
 class PetProfileCreate(BaseModel):
     username: str = Field(..., min_length=1, max_length=150)
     gender: Optional[str] = Field(None, max_length=20)
+    pet_type: Optional[str] = Field(None, max_length=50)
     date_of_birth: Optional[date] = None
     profile_picture_url: Optional[str] = Field(None, max_length=255)
 

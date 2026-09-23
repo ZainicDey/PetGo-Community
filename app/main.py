@@ -1,13 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import Base, auth_engine
+from app.database import Base, auth_engine, SocialBase, social_engine
 import app.models.user
 import app.models.follow
+import app.models.post
+import app.models.engagement
 from app.routers import auth, users, posts, comments, feed, search, admin
 
-# Ensure tables such as follows exist in the auth database
+# Ensure tables exist in both databases
 Base.metadata.create_all(bind=auth_engine, checkfirst=True)
+SocialBase.metadata.create_all(bind=social_engine, checkfirst=True)
 
 app = FastAPI(
     title="Social Thread API",

@@ -6,8 +6,8 @@ from app.database import get_social_db, get_auth_db
 from app.dependencies import get_current_user, require_social_profile, get_optional_current_user
 from app.models.user import DjangoUser
 from app.models.post import Post
-from app.models.engagement import Repost, Like
-from app.schemas.post import PostCreate, PostResponse, RepostResponse, LikeResponse
+from app.models.engagement import Repost, Like, SavedPost
+from app.schemas.post import PostCreate, PostResponse, RepostResponse, LikeResponse, SaveResponse, SavePostRequest
 from app.schemas.follow import UserBasicInfo
 from app.utils.media import process_media_list, delete_post_media_files
 from app.utils.user import attach_authors
@@ -85,6 +85,39 @@ async def get_posts(
             
     final_posts = attach_user_engagements(final_posts, user_id, db)
     return attach_authors(final_posts, auth_db, user_id)
+
+@router.get("/saved", response_model=List[PostResponse])
+async def get_saved_posts(
+    current_user: DjangoUser = Depends(require_social_profile),
+    auth_db: Session = Depends(get_auth_db),
+    social_db: Session = Depends(get_social_db)
+):
+    user_id = cast(int, current_user.id)
+    saved_records = social_db.query(SavedPost).filter(
+        SavedPost.user_id == user_id
+    ).order_by(SavedPost.created_at.desc()).all()
+    
+    post_ids = [s.post_id for s in saved_records]
+    if not post_ids:
+        return []
+        
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
+    post_dict = {post.id: post for post in posts}
+    ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
+    
+    ordered_posts = attach_user_engagements(ordered_posts, user_id, social_db)
+    return attach_authors(ordered_posts, auth_db, user_id)
+
+@router.post("/save", response_model=SaveResponse)
+async def save_post_body(
+    data: SavePostRequest,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_social_db)
+):
+    target_post_id = data.post_id if data.post_id is not None else data.id
+    if target_post_id is None:
+        raise HTTPException(status_code=400, detail="Missing post id")
+    return await save_post(target_post_id, current_user, db)
 
 @router.post("/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 async def create_post(
@@ -270,3 +303,48 @@ async def get_post_likes(
         
     users = auth_db.query(DjangoUser).filter(DjangoUser.id.in_(user_ids)).all()
     return users
+
+@router.post("/{post_id}/save", response_model=SaveResponse)
+async def save_post(
+    post_id: int,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_social_db)
+):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+        
+    user_id = cast(int, current_user.id)
+    existing_save = db.query(SavedPost).filter(
+        SavedPost.post_id == post_id,
+        SavedPost.user_id == user_id
+    ).first()
+    
+    if existing_save:
+        raise HTTPException(status_code=400, detail="You have already saved this post")
+        
+    new_save = SavedPost(post_id=post_id, user_id=user_id)
+    db.add(new_save)
+    db.commit()
+    db.refresh(new_save)
+    
+    return new_save
+
+@router.delete("/{post_id}/save", status_code=status.HTTP_204_NO_CONTENT)
+async def unsave_post(
+    post_id: int,
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_social_db)
+):
+    user_id = cast(int, current_user.id)
+    saved = db.query(SavedPost).filter(
+        SavedPost.post_id == post_id,
+        SavedPost.user_id == user_id
+    ).first()
+    
+    if not saved:
+        raise HTTPException(status_code=404, detail="You have not saved this post")
+        
+    db.delete(saved)
+    db.commit()
+

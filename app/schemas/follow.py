@@ -7,6 +7,7 @@ class UserBasicInfo(BaseModel):
     username: str
     profile_picture_url: Optional[str] = None
     profile_type: Optional[str] = None
+    pet_type: Optional[str] = None
     is_followed: bool = False
 
     class Config:

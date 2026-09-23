@@ -32,6 +32,10 @@ class DjangoUser(Base):
     @property
     def profile_type(self) -> Optional[str]:
         return self.social_profile.profile_type if self.social_profile else None
+        
+    @property
+    def pet_type(self) -> Optional[str]:
+        return self.social_profile.pet_type if self.social_profile else None
 
 class DjangoUserModel(Base):
     __tablename__ = "user_usermodel"
@@ -51,6 +55,7 @@ class SocialProfile(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("auth_user.id", ondelete="CASCADE"), unique=True, nullable=False)
     profile_type: Mapped[str] = mapped_column(String(50), nullable=False) # 'pet' or 'user'
     gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    pet_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     profile_picture_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 

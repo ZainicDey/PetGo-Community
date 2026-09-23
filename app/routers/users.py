@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_auth_db, get_social_db
 from app.models.user import DjangoUser, SocialProfile, ProfileLink
 from app.models.post import Post
-from app.models.engagement import Repost, Like
+from app.models.engagement import Repost, Like, Comment, SavedPost
 from app.schemas.user import (
     ProfileCreate, ProfileUpdate, ProfileResponse, UserMeResponse, 
     UsernameCheckRequest, UsernameCheckResponse, ActivityItem,
@@ -87,6 +87,32 @@ async def create_profile(
         "follower_count": follower_count
     }
 
+@router.delete("/pet-profile", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pet_profile(
+    current_user: DjangoUser = Depends(require_social_profile),
+    db: Session = Depends(get_auth_db),
+    social_db: Session = Depends(get_social_db)
+):
+    if not current_user.social_profile or current_user.social_profile.profile_type != "pet":
+        raise HTTPException(status_code=403, detail="Only a pet profile can delete itself")
+        
+    pet_user = db.query(DjangoUser).filter(DjangoUser.id == current_user.id).first()
+    if pet_user:
+        # Delete social data from social_db
+        # We delete from Like, Repost, Comment, and Post where the user is the author.
+        # Note: Deleting Post will cascade-delete its Comments, Likes, and Reposts in social_db,
+        # but we also need to delete the user's engagement on other people's posts.
+        social_db.query(Like).filter(Like.user_id == current_user.id).delete(synchronize_session=False)
+        social_db.query(Repost).filter(Repost.user_id == current_user.id).delete(synchronize_session=False)
+        social_db.query(SavedPost).filter(SavedPost.user_id == current_user.id).delete(synchronize_session=False)
+        social_db.query(Comment).filter(Comment.author_id == current_user.id).delete(synchronize_session=False)
+        social_db.query(Post).filter(Post.author_id == current_user.id).delete(synchronize_session=False)
+        social_db.commit()
+
+        # Delete auth user (cascades to profile, links, and follows)
+        db.query(DjangoUser).filter(DjangoUser.id == current_user.id).delete(synchronize_session=False)
+        db.commit()
+
 @router.post("/pet-profile", response_model=ProfileResponse)
 async def create_pet_profile(
     profile_data: PetProfileCreate,
@@ -159,11 +185,11 @@ async def get_switchable_profiles(
     db: Session = Depends(get_auth_db)
 ):
     # Determine the actual owner
-    owner_id = current_user.id
-    if current_user.social_profile.profile_type == "pet":
+    owner_id = cast(int, current_user.id)
+    if current_user.social_profile and current_user.social_profile.profile_type == "pet":
         link = db.query(ProfileLink).filter(ProfileLink.pet_user_id == current_user.id).first()
         if link:
-            owner_id = link.owner_user_id
+            owner_id = cast(int, link.owner_user_id)
 
     # Fetch owner
     owner = db.query(DjangoUser).options(joinedload(DjangoUser.social_profile)).filter(DjangoUser.id == owner_id).first()
@@ -178,9 +204,9 @@ async def get_switchable_profiles(
     profiles = []
     # Add owner
     profiles.append(SwitchableProfile(
-        user_id=owner.id,
-        username=owner.username,
-        profile_type=owner.social_profile.profile_type,
+        user_id=cast(int, owner.id),
+        username=cast(str, owner.username),
+        profile_type=cast(str, owner.social_profile.profile_type),
         profile_picture_url=owner.social_profile.profile_picture_url,
         is_owner=True
     ))
@@ -189,15 +215,15 @@ async def get_switchable_profiles(
     for pet in pets:
         if pet.social_profile:
             profiles.append(SwitchableProfile(
-                user_id=pet.id,
-                username=pet.username,
-                profile_type=pet.social_profile.profile_type,
+                user_id=cast(int, pet.id),
+                username=cast(str, pet.username),
+                profile_type=cast(str, pet.social_profile.profile_type),
                 profile_picture_url=pet.social_profile.profile_picture_url,
                 is_owner=False
             ))
 
     return SwitchableProfilesResponse(
-        active_profile_id=current_user.id,
+        active_profile_id=cast(int, current_user.id),
         profiles=profiles
     )
 
@@ -211,11 +237,11 @@ async def switch_profile(
     target_user_id = request.target_user_id
     
     # Determine current owner
-    owner_id = current_user.id
-    if current_user.social_profile.profile_type == "pet":
+    owner_id = cast(int, current_user.id)
+    if current_user.social_profile and current_user.social_profile.profile_type == "pet":
         link = db.query(ProfileLink).filter(ProfileLink.pet_user_id == current_user.id).first()
         if link:
-            owner_id = link.owner_user_id
+            owner_id = cast(int, link.owner_user_id)
 
     # Check if target is owner or a pet belonging to owner
     is_valid_target = False
@@ -247,9 +273,9 @@ async def switch_profile(
         access_token=encoded_jwt,
         token_type="bearer",
         user=SwitchProfileUser(
-            id=target_user.id,
-            username=target_user.username,
-            profile_type=target_user.social_profile.profile_type
+            id=cast(int, target_user.id),
+            username=cast(str, target_user.username),
+            profile_type=cast(str, target_user.social_profile.profile_type)
         )
     )
 
@@ -458,6 +484,39 @@ async def get_user_reposts(
     ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
     
     current_user_id = cast(int, optional_user.id) if optional_user else None
+    ordered_posts = attach_user_engagements(ordered_posts, current_user_id, social_db)
+    return attach_authors(ordered_posts, auth_db, current_user_id)
+
+@router.get("/{user_id}/saved", response_model=List[PostResponse])
+@router.get("/{user_id}/saved-posts", response_model=List[PostResponse])
+async def get_user_saved_posts(
+    user_id: int,
+    current_user: DjangoUser = Depends(require_social_profile),
+    auth_db: Session = Depends(get_auth_db),
+    social_db: Session = Depends(get_social_db)
+):
+    if current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You can only view your own saved posts"
+        )
+        
+    user = auth_db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Sort saved posts new to old
+    saved_records = social_db.query(SavedPost).filter(SavedPost.user_id == user_id).order_by(SavedPost.created_at.desc()).all()
+    post_ids = [s.post_id for s in saved_records]
+    
+    if not post_ids:
+        return []
+        
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
+    post_dict = {post.id: post for post in posts}
+    ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
+    
+    current_user_id = cast(int, current_user.id)
     ordered_posts = attach_user_engagements(ordered_posts, current_user_id, social_db)
     return attach_authors(ordered_posts, auth_db, current_user_id)
 

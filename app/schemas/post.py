@@ -25,6 +25,7 @@ class PostResponse(BaseModel):
     comments_count: int = 0
     is_liked: bool = False
     is_reposted: bool = False
+    is_saved: bool = False
     quoted_post_id: Optional[int] = None
     quoted_post: Optional["PostResponse"] = None
     reposter: Optional[UserBasicInfo] = None
@@ -50,4 +51,17 @@ class LikeResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SaveResponse(BaseModel):
+    id: int
+    post_id: int
+    user_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class SavePostRequest(BaseModel):
+    id: Optional[int] = None
+    post_id: Optional[int] = None
 

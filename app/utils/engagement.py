@@ -1,6 +1,6 @@
 from typing import List, Any, Optional
 from sqlalchemy.orm import Session
-from app.models.engagement import Like, Repost
+from app.models.engagement import Like, Repost, SavedPost
 
 def attach_user_engagements(items: List[Any], user_id: Optional[int] = None, db: Optional[Session] = None) -> List[Any]:
     if not items or not user_id or not db:
@@ -8,6 +8,7 @@ def attach_user_engagements(items: List[Any], user_id: Optional[int] = None, db:
         for item in items:
             item.is_liked = False
             item.is_reposted = False
+            item.is_saved = False
         return items
         
     def get_all_items_eng(items_list):
@@ -28,10 +29,15 @@ def attach_user_engagements(items: List[Any], user_id: Optional[int] = None, db:
     # Find which of these posts the user reposted
     user_reposts = db.query(Repost.post_id).filter(Repost.user_id == user_id, Repost.post_id.in_(item_ids)).all()
     reposted_post_ids = {row[0] for row in user_reposts}
+
+    # Find which of these posts the user saved
+    user_saves = db.query(SavedPost.post_id).filter(SavedPost.user_id == user_id, SavedPost.post_id.in_(item_ids)).all()
+    saved_post_ids = {row[0] for row in user_saves}
     
     for item in all_items:
         if hasattr(item, 'id'):
             item.is_liked = item.id in liked_post_ids
             item.is_reposted = item.id in reposted_post_ids
+            item.is_saved = item.id in saved_post_ids
             
     return items

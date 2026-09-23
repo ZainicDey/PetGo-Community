@@ -9,6 +9,7 @@ from app.models.user import DjangoUser
 from app.schemas.comment import CommentCreate, CommentUpdate, CommentResponse
 from app.dependencies import get_current_user, require_social_profile
 from app.utils.user import attach_authors
+from app.utils.media import delete_cloudinary_media, parse_cloudinary_url
 
 router = APIRouter(prefix="/comments", tags=["Comments"])
 
@@ -38,6 +39,7 @@ async def create_comment(
         author_id=current_user.id,
         parent_id=data.parent_id,
         content=data.content,
+        image_url=data.image_url,
     )
     db.add(comment)
     db.commit()
@@ -121,10 +123,21 @@ async def update_comment(
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
 
+    if comment.is_deleted:
+        raise HTTPException(status_code=400, detail="Cannot edit a deleted comment")
+
     if comment.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only edit your own comments")
 
+    # If the image was removed or changed, delete the old one from Cloudinary
+    if comment.image_url and comment.image_url != data.image_url:
+        parsed = parse_cloudinary_url(comment.image_url)
+        if parsed["public_id"]:
+            delete_cloudinary_media(parsed["public_id"], parsed["media_type"] or "image")
+
     comment.content = data.content
+    comment.image_url = data.image_url
+    comment.is_edited = True
     db.commit()
     db.refresh(comment)
 
@@ -137,13 +150,24 @@ async def delete_comment(
     current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db),
 ):
-    """Delete a comment and all its nested replies. Only the author can delete."""
+    """Soft delete a comment. Only the author can delete."""
     comment = db.query(Comment).filter(Comment.id == comment_id).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
 
+    if comment.is_deleted:
+        raise HTTPException(status_code=400, detail="Comment is already deleted")
+
     if comment.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only delete your own comments")
 
-    db.delete(comment)
+    # Delete media from Cloudinary if exists
+    if comment.image_url:
+        parsed = parse_cloudinary_url(comment.image_url)
+        if parsed["public_id"]:
+            delete_cloudinary_media(parsed["public_id"], parsed["media_type"] or "image")
+
+    comment.is_deleted = True
+    comment.content = "[This comment has been deleted]"
+    comment.image_url = None
     db.commit()

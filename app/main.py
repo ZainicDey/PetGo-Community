@@ -23,6 +23,7 @@ origins = [
     "http://localhost:3000",
     "http://localhost:3001",
     "https://petgo-community.vercel.app",
+    "https://pet-go-community-main.vercel.app",
 ]
 
 app.add_middleware(

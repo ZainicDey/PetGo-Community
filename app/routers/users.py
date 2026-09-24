@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from jose import jwt
 from app.utils.user import attach_authors
 from app.utils.engagement import attach_user_engagements
+from app.utils.media import delete_post_media_files, delete_cloudinary_media, parse_cloudinary_url
 from app.models.follow import Follow
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -98,6 +99,20 @@ async def delete_pet_profile(
         
     pet_user = db.query(DjangoUser).filter(DjangoUser.id == current_user.id).first()
     if pet_user:
+        # Fetch user's posts to delete their media from Cloudinary
+        user_posts = social_db.query(Post).filter(Post.author_id == current_user.id).all()
+        for post in user_posts:
+            if post.media:
+                delete_post_media_files(cast(List[dict], post.media))
+                
+        # Fetch user's comments to delete their media from Cloudinary
+        user_comments = social_db.query(Comment).filter(Comment.author_id == current_user.id).all()
+        for comment in user_comments:
+            if comment.image_url:
+                parsed = parse_cloudinary_url(comment.image_url)
+                if parsed and parsed.get("public_id"):
+                    delete_cloudinary_media(parsed["public_id"], parsed.get("media_type") or "image")
+
         # Delete social data from social_db
         # We delete from Like, Repost, Comment, and Post where the user is the author.
         # Note: Deleting Post will cascade-delete its Comments, Likes, and Reposts in social_db,

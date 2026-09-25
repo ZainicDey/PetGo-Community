@@ -13,11 +13,19 @@ DB_HOST = os.getenv("DB_HOST", "aws-0-ap-northeast-1.pooler.supabase.com")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "postgres")
 
-SQLALCHEMY_DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-SOCIAL_DB_URL = os.getenv(
+SQLALCHEMY_DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+SOCIAL_DB_URL_RAW = os.getenv(
     "SOCIAL_DB_URL",
     "postgresql://postgres.zcgvxinlxcvmulrjfkgs:FfvsiAYTwwqLMONn@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
 )
+
+# Force psycopg2 dialect
+if SOCIAL_DB_URL_RAW.startswith("postgres://"):
+    SOCIAL_DB_URL = SOCIAL_DB_URL_RAW.replace("postgres://", "postgresql+psycopg2://", 1)
+elif SOCIAL_DB_URL_RAW.startswith("postgresql://"):
+    SOCIAL_DB_URL = SOCIAL_DB_URL_RAW.replace("postgresql://", "postgresql+psycopg2://", 1)
+else:
+    SOCIAL_DB_URL = SOCIAL_DB_URL_RAW
 
 # Primary Auth DB (Supabase)
 auth_engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)

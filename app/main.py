@@ -8,9 +8,13 @@ import app.models.post
 import app.models.engagement
 from app.routers import auth, users, posts, comments, feed, search, admin
 
-# Ensure tables exist in both databases
-Base.metadata.create_all(bind=auth_engine, checkfirst=True)
-SocialBase.metadata.create_all(bind=social_engine, checkfirst=True)
+# Ensure tables exist in both databases (safely caught so DB hiccups do not crash serverless cold start)
+try:
+    Base.metadata.create_all(bind=auth_engine, checkfirst=True)
+    SocialBase.metadata.create_all(bind=social_engine, checkfirst=True)
+except Exception as exc:
+    import logging
+    logging.getLogger("uvicorn.error").warning(f"Could not verify database schema on boot: {exc}")
 
 app = FastAPI(
     title="Social Thread API",

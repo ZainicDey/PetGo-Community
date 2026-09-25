@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Literal, List, Union
 from datetime import datetime
 from app.schemas.follow import UserBasicInfo
@@ -9,9 +9,15 @@ class MediaItem(BaseModel):
     public_id: Optional[str] = None
 
 class PostCreate(BaseModel):
-    content: str = Field(..., min_length=1)
+    content: str = ""
     media: Optional[List[Union[MediaItem, str]]] = Field(default_factory=list)
     quoted_post_id: Optional[int] = None
+
+    @model_validator(mode='after')
+    def validate_content_or_media(self):
+        if not self.content.strip() and not self.media:
+            raise ValueError("String should have at least 1 character")
+        return self
 
 class PostResponse(BaseModel):
     id: int

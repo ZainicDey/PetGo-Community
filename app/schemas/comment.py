@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 from app.schemas.follow import UserBasicInfo
 
@@ -7,13 +7,25 @@ from app.schemas.follow import UserBasicInfo
 class CommentCreate(BaseModel):
     post_id: int
     parent_id: Optional[int] = None  # None = top-level comment, set = reply
-    content: str = Field(..., min_length=1)
+    content: str = ""
     image_url: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_content_or_image(self):
+        if not self.content.strip() and not self.image_url:
+            raise ValueError("String should have at least 1 character")
+        return self
 
 
 class CommentUpdate(BaseModel):
-    content: str = Field(..., min_length=1)
+    content: str = ""
     image_url: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_content_or_image(self):
+        if not self.content.strip() and not self.image_url:
+            raise ValueError("String should have at least 1 character")
+        return self
 
 
 class CommentResponse(BaseModel):

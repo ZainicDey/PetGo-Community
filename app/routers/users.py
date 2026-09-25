@@ -494,7 +494,7 @@ async def get_user_reposts(
     if not post_ids:
         return []
         
-    posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
     post_dict = {post.id: post for post in posts}
     ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
     
@@ -553,7 +553,7 @@ async def get_user_likes(
     if not post_ids:
         return []
         
-    posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
     post_dict = {post.id: post for post in posts}
     ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
     
@@ -572,7 +572,7 @@ async def get_user_posts(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    posts = social_db.query(Post).filter(Post.author_id == user_id).order_by(Post.created_at.desc()).all()
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.author_id == user_id).order_by(Post.created_at.desc()).all()
     
     current_user_id = cast(int, optional_user.id) if optional_user else None
     posts = attach_user_engagements(posts, current_user_id, social_db)
@@ -616,7 +616,7 @@ async def get_user_activity(
     if not post_ids:
         return []
         
-    posts = social_db.query(Post).filter(Post.id.in_(post_ids)).all()
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
     current_user_id = cast(int, optional_user.id) if optional_user else None
     posts = attach_user_engagements(posts, current_user_id, social_db)
     posts = attach_authors(posts, auth_db, current_user_id)

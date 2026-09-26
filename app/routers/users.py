@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import cast, Optional, List
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 
 from app.database import get_auth_db, get_social_db
 from app.models.user import DjangoUser, SocialProfile, ProfileLink
@@ -487,18 +488,43 @@ async def get_user_reposts(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    # Sort reposts new to old
-    reposts = social_db.query(Repost).filter(Repost.user_id == user_id).order_by(Repost.created_at.desc()).all()
+    current_user_id = cast(int, optional_user.id) if optional_user else None
+    
+    # Check if current user is a follower of this user
+    is_follower = False
+    if current_user_id and current_user_id != user_id:
+        from app.models.follow import Follow
+        follow = auth_db.query(Follow).filter(
+            Follow.follower_id == current_user_id,
+            Follow.following_id == user_id
+        ).first()
+        is_follower = follow is not None
+
+    # Filter reposts based on visibility
+    repost_conditions = [Repost.visibility == 'public']
+    if current_user_id == user_id or is_follower:
+        repost_conditions.append(Repost.visibility == 'followers')
+        
+    reposts = social_db.query(Repost).filter(
+        Repost.user_id == user_id,
+        or_(*repost_conditions)
+    ).order_by(Repost.created_at.desc()).all()
+    
     post_ids = [repost.post_id for repost in reposts]
     
     if not post_ids:
         return []
         
     posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.id.in_(post_ids)).all()
+    
+    # Further filter original posts inside reposts by visibility if needed, 
+    # but since the repost itself was visible, we assume we show it. 
+    # However, if we strictly want to hide quoted/reposted posts where the original post is followers-only and we don't follow the original author... 
+    # For now, we will just apply the basic logic to the reposts themselves.
+    
     post_dict = {post.id: post for post in posts}
     ordered_posts = [post_dict[pid] for pid in post_ids if pid in post_dict]
     
-    current_user_id = cast(int, optional_user.id) if optional_user else None
     ordered_posts = attach_user_engagements(ordered_posts, current_user_id, social_db)
     return attach_authors(ordered_posts, auth_db, current_user_id)
 
@@ -572,9 +598,28 @@ async def get_user_posts(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(Post.author_id == user_id).order_by(Post.created_at.desc()).all()
-    
     current_user_id = cast(int, optional_user.id) if optional_user else None
+    
+    # Check if current user is a follower of this user
+    is_follower = False
+    if current_user_id and current_user_id != user_id:
+        from app.models.follow import Follow
+        follow = auth_db.query(Follow).filter(
+            Follow.follower_id == current_user_id,
+            Follow.following_id == user_id
+        ).first()
+        is_follower = follow is not None
+
+    post_conditions = [Post.visibility == 'public']
+    # If it's the user themselves OR they are a follower, they can see followers-only posts
+    if current_user_id == user_id or is_follower:
+        post_conditions.append(Post.visibility == 'followers')
+        
+    posts = social_db.query(Post).options(joinedload(Post.quoted_post)).filter(
+        Post.author_id == user_id,
+        or_(*post_conditions)
+    ).order_by(Post.created_at.desc()).all()
+    
     posts = attach_user_engagements(posts, current_user_id, social_db)
     return attach_authors(posts, auth_db, current_user_id)
 

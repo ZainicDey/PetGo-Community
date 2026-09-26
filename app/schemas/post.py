@@ -12,6 +12,7 @@ class PostCreate(BaseModel):
     content: str = ""
     media: Optional[List[Union[MediaItem, str]]] = Field(default_factory=list)
     quoted_post_id: Optional[int] = None
+    visibility: Literal["public", "followers"] = "public"
 
     @model_validator(mode='after')
     def validate_content_or_media(self):
@@ -25,6 +26,7 @@ class PostResponse(BaseModel):
     author: Optional[UserBasicInfo] = None
     content: str
     media: Optional[List[MediaItem]] = Field(default_factory=list)
+    visibility: str = "public"
     created_at: datetime
     likes_count: int = 0
     reposts_count: int = 0
@@ -44,6 +46,7 @@ class RepostResponse(BaseModel):
     id: int
     post_id: int
     user_id: int
+    visibility: str = "public"
     created_at: datetime
 
     class Config:
@@ -70,4 +73,7 @@ class SaveResponse(BaseModel):
 class SavePostRequest(BaseModel):
     id: Optional[int] = None
     post_id: Optional[int] = None
+
+class RepostCreate(BaseModel):
+    visibility: Literal["public", "followers"] = "public"
 

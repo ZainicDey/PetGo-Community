@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional, cast
 
@@ -7,7 +7,7 @@ from app.dependencies import get_current_user, require_social_profile, get_optio
 from app.models.user import DjangoUser
 from app.models.post import Post
 from app.models.engagement import Repost, Like, SavedPost
-from app.schemas.post import PostCreate, PostResponse, RepostResponse, LikeResponse, SaveResponse, SavePostRequest
+from app.schemas.post import PostCreate, PostResponse, RepostResponse, LikeResponse, SaveResponse, SavePostRequest, RepostCreate
 from app.schemas.follow import UserBasicInfo
 from app.utils.media import process_media_list, delete_post_media_files
 from app.utils.user import attach_authors
@@ -15,7 +15,7 @@ from app.utils.engagement import attach_user_engagements
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
-from sqlalchemy import select, literal, union_all, text, Integer
+from sqlalchemy import select, literal, union_all, text, Integer, or_, and_
 from sqlalchemy.orm import joinedload
 
 @router.get("/", response_model=List[PostResponse])
@@ -26,19 +26,38 @@ async def get_posts(
     auth_db: Session = Depends(get_auth_db),
     optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
+    user_id = cast(int, optional_user.id) if optional_user else None
+    following_ids = []
+    if user_id:
+        from app.models.follow import Follow
+        follows = auth_db.query(Follow).filter(Follow.follower_id == user_id).all()
+        following_ids = [f.following_id for f in follows]
+
+    post_conditions = [Post.visibility == 'public']
+    if user_id:
+        post_conditions.append(Post.author_id == user_id)
+        if following_ids:
+            post_conditions.append(and_(Post.visibility == 'followers', Post.author_id.in_(following_ids)))
+
     post_query = select(
         Post.id.label("post_id"),
         Post.created_at.label("created_at"),
         literal(False).label("is_repost"),
         literal(None, type_=Integer).label("reposter_id")
-    )
+    ).where(or_(*post_conditions))
     
+    repost_conditions = [Repost.visibility == 'public']
+    if user_id:
+        repost_conditions.append(Repost.user_id == user_id)
+        if following_ids:
+            repost_conditions.append(and_(Repost.visibility == 'followers', Repost.user_id.in_(following_ids)))
+
     repost_query = select(
         Repost.post_id.label("post_id"),
         Repost.created_at.label("created_at"),
         literal(True).label("is_repost"),
         Repost.user_id.label("reposter_id")
-    )
+    ).where(or_(*repost_conditions))
     
     combined_query = union_all(post_query, repost_query).order_by(text("created_at DESC")).offset(offset).limit(limit)
     feed_items = db.execute(combined_query).fetchall()
@@ -58,14 +77,7 @@ async def get_posts(
     reposter_map = {}
     
     # We can also attach is_followed for reposters if needed
-    followed_user_ids = set()
-    if user_id and reposter_ids:
-        from app.models.follow import Follow
-        follows = auth_db.query(Follow).filter(
-            Follow.follower_id == user_id,
-            Follow.following_id.in_(reposter_ids)
-        ).all()
-        followed_user_ids = {f.following_id for f in follows}
+    followed_user_ids = set(following_ids) if following_ids else set()
         
     for reposter in reposters:
         info = UserBasicInfo.model_validate(reposter)
@@ -137,6 +149,7 @@ async def create_post(
         content=data.content,
         media=processed_media,
         quoted_post_id=data.quoted_post_id,
+        visibility=data.visibility,
     )
     db.add(new_post)
     db.commit()
@@ -153,6 +166,18 @@ async def get_post(
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+        
+    if post.visibility == 'followers':
+        if not optional_user:
+            raise HTTPException(status_code=401, detail="You must be logged in to view this post")
+        if post.author_id != optional_user.id:
+            from app.models.follow import Follow
+            is_following = auth_db.query(Follow).filter(
+                Follow.follower_id == optional_user.id,
+                Follow.following_id == post.author_id
+            ).first()
+            if not is_following:
+                raise HTTPException(status_code=403, detail="This post is for followers only")
         
     user_id = cast(int, optional_user.id) if optional_user else None
     post = attach_user_engagements([post], user_id, db)[0]
@@ -185,12 +210,16 @@ async def delete_post(
 @router.post("/{post_id}/repost", response_model=RepostResponse)
 async def repost_post(
     post_id: int,
+    data: RepostCreate = Body(default_factory=RepostCreate),
     current_user: DjangoUser = Depends(require_social_profile),
     db: Session = Depends(get_social_db)
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+        
+    if post.visibility == 'followers':
+        raise HTTPException(status_code=403, detail="You cannot repost a followers-only post")
         
     existing_repost = db.query(Repost).filter(
         Repost.post_id == post_id,
@@ -200,7 +229,7 @@ async def repost_post(
     if existing_repost:
         raise HTTPException(status_code=400, detail="You have already reposted this post")
         
-    new_repost = Repost(post_id=post_id, user_id=current_user.id)
+    new_repost = Repost(post_id=post_id, user_id=current_user.id, visibility=data.visibility)
     db.add(new_repost)
     db.commit()
     db.refresh(new_repost)

@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Text, DateTime, select, func, ForeignKey
+from sqlalchemy import Integer, Text, DateTime, select, func, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, column_property, relationship
 from datetime import datetime
@@ -15,6 +15,7 @@ class Post(SocialBase):
     # Store list of media dicts: [{"url": "...", "media_type": "image"|"video", "public_id": "..."}]
     media: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, default=list, server_default="[]")
     quoted_post_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("posts.id", ondelete="SET NULL"), nullable=True, index=True)
+    visibility: Mapped[str] = mapped_column(String(20), default="public", server_default="public")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     quoted_post: Mapped[Optional["Post"]] = relationship("Post", remote_side=[id])

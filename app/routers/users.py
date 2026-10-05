@@ -77,6 +77,7 @@ async def create_profile(
     db.refresh(new_profile)
     
     follower_count = db.query(Follow).filter(Follow.following_id == current_user.id).count()
+    following_count = db.query(Follow).filter(Follow.follower_id == current_user.id).count()
     
     return {
         "id": new_profile.id,
@@ -86,7 +87,9 @@ async def create_profile(
         "date_of_birth": new_profile.date_of_birth,
         "username": current_user.username,
         "profile_picture_url": new_profile.profile_picture_url,
-        "follower_count": follower_count
+        "follower_count": follower_count,
+        "following_count": following_count,
+        "is_following": False
     }
 
 @router.delete("/pet-profile", status_code=status.HTTP_204_NO_CONTENT)
@@ -192,7 +195,9 @@ async def create_pet_profile(
         "date_of_birth": new_profile.date_of_birth,
         "username": new_user.username,
         "profile_picture_url": new_profile.profile_picture_url,
-        "follower_count": 0
+        "follower_count": 0,
+        "following_count": 0,
+        "is_following": False
     }
 
 @router.get("/switchable-profiles", response_model=SwitchableProfilesResponse)
@@ -298,7 +303,8 @@ async def switch_profile(
 @router.get("/{user_id}/profile", response_model=ProfileResponse)
 async def get_user_profile(
     user_id: int,
-    db: Session = Depends(get_auth_db)
+    db: Session = Depends(get_auth_db),
+    optional_user: Optional[DjangoUser] = Depends(get_optional_current_user)
 ):
     user = db.query(DjangoUser).filter(DjangoUser.id == user_id).first()
     if not user:
@@ -310,7 +316,17 @@ async def get_user_profile(
     profile = cast(SocialProfile, user.social_profile)
     
     follower_count = db.query(Follow).filter(Follow.following_id == user.id).count()
+    following_count = db.query(Follow).filter(Follow.follower_id == user.id).count()
     
+    is_following = False
+    if optional_user:
+        follow = db.query(Follow).filter(
+            Follow.follower_id == optional_user.id,
+            Follow.following_id == user.id
+        ).first()
+        if follow:
+            is_following = True
+            
     return {
         "id": profile.id,
         "user_id": profile.user_id,
@@ -319,7 +335,9 @@ async def get_user_profile(
         "date_of_birth": profile.date_of_birth,
         "username": user.username,
         "profile_picture_url": profile.profile_picture_url,
-        "follower_count": follower_count
+        "follower_count": follower_count,
+        "following_count": following_count,
+        "is_following": is_following
     }
 
 
@@ -335,6 +353,7 @@ async def get_my_profile(
     profile = cast(SocialProfile, current_user.social_profile)
     
     follower_count = db.query(Follow).filter(Follow.following_id == current_user.id).count()
+    following_count = db.query(Follow).filter(Follow.follower_id == current_user.id).count()
     
     return {
         "id": profile.id,
@@ -344,7 +363,9 @@ async def get_my_profile(
         "date_of_birth": profile.date_of_birth,
         "username": current_user.username,
         "profile_picture_url": profile.profile_picture_url,
-        "follower_count": follower_count
+        "follower_count": follower_count,
+        "following_count": following_count,
+        "is_following": False
     }
 
 @router.patch("/profile", response_model=ProfileResponse)
@@ -383,6 +404,7 @@ async def update_profile(
     db.refresh(current_user)
     
     follower_count = db.query(Follow).filter(Follow.following_id == current_user.id).count()
+    following_count = db.query(Follow).filter(Follow.follower_id == current_user.id).count()
     
     return {
         "id": profile.id,
@@ -392,7 +414,9 @@ async def update_profile(
         "date_of_birth": profile.date_of_birth,
         "username": current_user.username,
         "profile_picture_url": profile.profile_picture_url,
-        "follower_count": follower_count
+        "follower_count": follower_count,
+        "following_count": following_count,
+        "is_following": False
     }
 
 from typing import List

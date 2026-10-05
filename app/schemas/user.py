@@ -29,6 +29,8 @@ class ProfileResponse(BaseModel):
     username: str
     profile_picture_url: Optional[str] = None
     follower_count: int = 0
+    following_count: int = 0
+    is_following: bool = False
 
     class Config:
         from_attributes = True
